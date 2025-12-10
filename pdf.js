@@ -23,7 +23,7 @@ async function run() {
 
   await page.goto(url, { waitUntil: "networkidle2" });
 
-  // Remove hidden elements
+  // Remove hidden elements (desktop / unused)
   await page.evaluate(() => {
     function isHidden(el) {
       const style = getComputedStyle(el);
@@ -56,7 +56,7 @@ async function run() {
     `
   });
 
-  // Force responsive mobile layout
+  // Force responsive mobile layout (same as your good version)
   await page.addStyleTag({
     content: `
       body, html {
@@ -73,17 +73,42 @@ async function run() {
   // Allow layout to settle
   await new Promise(res => setTimeout(res, 500));
 
-  // Measure full height
+  // 🔥 NEW: scroll through the page once to trigger lazy loading and load all images
+  await page.evaluate(async () => {
+    const delay = ms => new Promise(r => setTimeout(r, ms));
+    const viewportHeight = window.innerHeight || 667;
+    let current = 0;
+    let maxHeight = document.body.scrollHeight;
+
+    while (current + viewportHeight < maxHeight) {
+      window.scrollTo(0, current);
+      await delay(300);
+      current += viewportHeight;
+      maxHeight = document.body.scrollHeight;
+    }
+
+    // final pass at absolute bottom
+    window.scrollTo(0, maxHeight);
+    await delay(300);
+
+    // go back to top for the capture
+    window.scrollTo(0, 0);
+  });
+
+  // Small extra wait for any pending image loads / network
+  await new Promise(res => setTimeout(res, 800));
+
+  // Measure full height AFTER scroll (lazy content now loaded)
   const fullHeight = await page.evaluate(() => document.body.scrollHeight);
 
-  // Expand viewport to full height
+  // Expand viewport to full height (this is what gives you the good responsiveness)
   await page.setViewport({
     width: 375,
     height: fullHeight,
     deviceScaleFactor: 2
   });
 
-  // Capture full page WITHOUT stitching
+  // Capture full page WITHOUT stitching (same as good version)
   const imgBuffer = await page.screenshot({
     fullPage: false
   });
@@ -94,7 +119,7 @@ async function run() {
 
   fs.writeFileSync(pngPath, imgBuffer);
 
-  // Convert to PDF
+  // Convert PNG to PDF
   const pdfDoc = await PDFDocument.create();
   const pngImage = await pdfDoc.embedPng(imgBuffer);
   const pagePDF = pdfDoc.addPage([pngImage.width, pngImage.height]);

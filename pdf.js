@@ -13,9 +13,12 @@ async function run() {
   const page = await browser.newPage();
 
   // Force mobile viewport
+  const VIEWPORT_WIDTH = 375;
+  const VIEWPORT_HEIGHT = 667;
+
   await page.setViewport({
-    width: 375,
-    height: 667,
+    width: VIEWPORT_WIDTH,
+    height: VIEWPORT_HEIGHT,
     deviceScaleFactor: 2,
     isMobile: true,
     hasTouch: true
@@ -56,11 +59,11 @@ async function run() {
     `
   });
 
-  // Force responsive mobile layout (same as your good version)
+  // Force responsive mobile layout
   await page.addStyleTag({
     content: `
       body, html {
-        width: 375px !important;
+        width: ${VIEWPORT_WIDTH}px !important;
         overflow-x: hidden !important;
       }
       img, video {
@@ -73,7 +76,28 @@ async function run() {
   // Allow layout to settle
   await new Promise(res => setTimeout(res, 500));
 
-  // 🔥 NEW: scroll through the page once to trigger lazy loading and load all images
+  // Only stack "image + text" flex rows, leave comparison rows alone
+  await page.evaluate(() => {
+    const isMediaContainer = el => {
+      return !!el.querySelector("img, picture, video");
+    };
+
+    document.querySelectorAll("*").forEach(el => {
+      const style = getComputedStyle(el);
+      if (style.display === "flex" && style.flexDirection === "row") {
+        const children = Array.from(el.children);
+        const hasMediaChild = children.some(c => isMediaContainer(c) || c.tagName === "IMG");
+
+        // Only stack 2-child flex rows with media (typical hero / image+copy sections)
+        if (children.length === 2 && hasMediaChild) {
+          el.style.flexDirection = "column";
+          el.style.alignItems = "stretch";
+        }
+      }
+    });
+  });
+
+  // Scroll through the page once to trigger lazy loading and load all images
   await page.evaluate(async () => {
     const delay = ms => new Promise(r => setTimeout(r, ms));
     const viewportHeight = window.innerHeight || 667;
@@ -98,42 +122,48 @@ async function run() {
   // Small extra wait for any pending image loads / network
   await new Promise(res => setTimeout(res, 800));
 
-  // Measure full height AFTER scroll (lazy content now loaded)
+  // Get full scroll height after everything has loaded
   const fullHeight = await page.evaluate(() => document.body.scrollHeight);
 
-  // Expand viewport to full height (this is what gives you the good responsiveness)
-  await page.setViewport({
-    width: 375,
-    height: fullHeight,
-    deviceScaleFactor: 2
-  });
+  // Capture the page in multiple 667px-tall slices
+  const screenshots = [];
+  let offset = 0;
 
-  // Capture full page WITHOUT stitching (same as good version)
-  const imgBuffer = await page.screenshot({
-    fullPage: false
-  });
+  while (offset < fullHeight) {
+    await page.evaluate(y => window.scrollTo(0, y), offset);
+    await new Promise(res => setTimeout(res, 250));
 
-  // Save PNG
+    const buffer = await page.screenshot({
+      fullPage: false // current viewport only
+    });
+
+    screenshots.push(buffer);
+    offset += VIEWPORT_HEIGHT;
+  }
+
+  // Save first slice as PNG (optional)
   const pngPath = "C:\\Users\\14433\\Downloads\\mobile.png";
-  const pdfPath = "C:\\Users\\14433\\Downloads\\mobile.pdf";
+  fs.writeFileSync(pngPath, screenshots[0]);
 
-  fs.writeFileSync(pngPath, imgBuffer);
-
-  // Convert PNG to PDF
+  // Build PDF from all slices (each slice = one page)
   const pdfDoc = await PDFDocument.create();
-  const pngImage = await pdfDoc.embedPng(imgBuffer);
-  const pagePDF = pdfDoc.addPage([pngImage.width, pngImage.height]);
-  pagePDF.drawImage(pngImage, {
-    x: 0,
-    y: 0,
-    width: pngImage.width,
-    height: pngImage.height
-  });
+
+  for (const shot of screenshots) {
+    const pngImage = await pdfDoc.embedPng(shot);
+    const pagePDF = pdfDoc.addPage([pngImage.width, pngImage.height]);
+    pagePDF.drawImage(pngImage, {
+      x: 0,
+      y: 0,
+      width: pngImage.width,
+      height: pngImage.height
+    });
+  }
 
   const pdfBytes = await pdfDoc.save();
+  const pdfPath = "C:\\Users\\14433\\Downloads\\mobile.pdf";
   fs.writeFileSync(pdfPath, pdfBytes);
 
-  console.log("✔ Perfect mobile PDF created:", pdfPath);
+  console.log("✔ Mobile PDF (full page, smart responsive layout) created:", pdfPath);
 
   await browser.close();
 }
